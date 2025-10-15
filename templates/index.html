@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>S3 LocalStack - Upload e Download</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 30px; background-color: #f4f7f6; }
+        h1 { color: #232f3e; border-bottom: 2px solid #ccc; padding-bottom: 10px; }
+        h2 { color: #5a5a5a; }
+        .container { max-width: 800px; margin: auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        .upload-form, .file-list { margin-bottom: 30px; padding: 20px; border: 1px solid #ddd; border-radius: 5px; background-color: #f9f9f9; }
+        .file-list ul { list-style: none; padding: 0; }
+        .file-list li { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; padding: 10px; border-bottom: 1px dashed #eee; background-color: white; border-radius: 3px; }
+        .download-link { text-decoration: none; color: #0073e6; font-weight: bold; padding: 5px 10px; border: 1px solid #0073e6; border-radius: 3px; }
+        .download-link:hover { background-color: #0073e6; color: white; }
+        input[type="file"], button[type="submit"] { padding: 10px; margin-top: 10px; }
+        button[type="submit"] { background-color: #ff9900; color: white; border: none; border-radius: 5px; cursor: pointer; }
+        button[type="submit"]:hover { background-color: #e68a00; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>AWS S3 (LocalStack) File Manager</h1>
+        
+        <div class="upload-form">
+            <h2>1. Fazer Upload de Arquivo</h2>
+            <form method="POST" enctype="multipart/form-data">
+                <input type="file" name="file" required>
+                <button type="submit">Upload para o Bucket: <b>{{ bucket_name }}</b></button>
+            </form>
+        </div>
+
+        <div class="file-list">
+            <h2>2. Arquivos no Bucket</h2>
+            {% if files %}
+                <ul>
+                    {% for file in files %}
+                        <li>
+                            <span>{{ file }}</span>
+                            <a href="{{ url_for('download', filename=file) }}" class="download-link" download="{{ file }}">
+                                Download
+                            </a>
+                        </li>
+                    {% endfor %}
+                </ul>
+            {% else %}
+                <p>Nenhum arquivo encontrado no bucket <b>{{ bucket_name }}</b>.</p>
+            {% endif %}
+        </div>
+    </div>
+</body>
+</html>
