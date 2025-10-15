@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>Dashboard - AWS Local Dev Sandbox</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 20px; background-color: #f4f7f6; color: #232f3e; }
+        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #ccc; padding-bottom: 10px; margin-bottom: 30px; }
+        h1 { color: #0073e6; margin: 0; }
+        .username { color: #ff9900; font-weight: bold; }
+        .logout-btn { background-color: #cc0000; color: white; text-decoration: none; padding: 8px 15px; border-radius: 4px; font-weight: bold; }
+        .logout-btn:hover { background-color: #a30000; }
+        .section-box { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); margin-bottom: 25px; }
+        
+        /* S3 File Manager Styles */
+        .upload-form { padding: 20px; border: 1px dashed #0073e6; border-radius: 5px; margin-bottom: 20px; background-color: #e6f7ff; }
+        .upload-form h2 { color: #0073e6; margin-top: 0; }
+        input[type="file"], .upload-btn { padding: 10px; margin-top: 10px; }
+        .upload-btn { background-color: #ff9900; color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; }
+        .upload-btn:hover { background-color: #e68a00; }
+        
+        .file-list h2 { color: #232f3e; }
+        .file-list ul { list-style: none; padding: 0; }
+        .file-list li { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; padding: 10px; border-bottom: 1px solid #eee; background-color: white; border-radius: 3px; }
+        .download-link { text-decoration: none; color: #0073e6; font-weight: bold; padding: 5px 10px; border: 1px solid #0073e6; border-radius: 3px; }
+        .download-link:hover { background-color: #0073e6; color: white; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Dashboard Sandbox | Usuário: <span class="username">{{ username }}</span></h1>
+        <a href="{{ url_for('logout') }}" class="logout-btn">Sair da Conta</a>
+    </div>
+
+    <div class="section-box">
+        <h2>AWS S3 (LocalStack) File Manager</h2>
+        
+        <div class="upload-form">
+            <h2>Upload de Arquivo (Bucket: {{ bucket_name }})</h2>
+            <p>Seus arquivos são isolados por usuário (prefixo: <code>{{ username }}/</code>)</p>
+            <form method="POST" enctype="multipart/form-data">
+                <input type="file" name="file" required>
+                <button type="submit" class="upload-btn">Upload para o S3</button>
+            </form>
+        </div>
+
+        <div class="file-list">
+            <h2>Arquivos no seu Espaço</h2>
+            {% if files %}
+                <ul>
+                    {% for file_obj in files %}
+                        <li>
+                            <span>{{ file_obj.filename }}</span>
+                            <a href="{{ url_for('download', filename=file_obj.filename) }}" class="download-link" download="{{ file_obj.filename }}">
+                                Download
+                            </a>
+                        </li>
+                    {% endfor %}
+                </ul>
+            {% else %}
+                <p>Nenhum arquivo encontrado no seu espaço S3.</p>
+            {% endif %}
+        </div>
+    </div>
+</body>
+</html>

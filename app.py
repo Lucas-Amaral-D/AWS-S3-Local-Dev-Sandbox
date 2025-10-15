@@ -1,108 +1,212 @@
 import os
-from flask import Flask, render_template, request, redirect, url_for, Response
+from flask import Flask, render_template, request, redirect, url_for, Response, session
 import boto3
 from botocore.exceptions import ClientError
+from werkzeug.security import generate_password_hash, check_password_hash 
 
 app = Flask(__name__)
+app.secret_key = 'uma_chave_secreta_muito_segura_e_longa_para_sessao' 
 
-# --- CONFIGURAÇÃO DO LOCALSTACK/S3 ---
 AWS_ACCESS_KEY_ID = 'test'
 AWS_SECRET_ACCESS_KEY = 'test'
 AWS_REGION = 'us-east-1'
-S3_ENDPOINT_URL = 'http://localhost:4566' # Aponta para o container LocalStack
-S3_BUCKET_NAME = 'arquivos-do-sistema'  # Nome do bucket
+LOCALSTACK_ENDPOINT_URL = 'http://localhost:4566' 
 
-# Inicializa o cliente S3 do Boto3
+S3_BUCKET_NAME = 'arquivos-do-sistema'
 s3_client = boto3.client(
     's3',
     aws_access_key_id=AWS_ACCESS_KEY_ID,
     aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
     region_name=AWS_REGION,
-    endpoint_url=S3_ENDPOINT_URL
+    endpoint_url=LOCALSTACK_ENDPOINT_URL
 )
 
+DYNAMODB_TABLE_NAME = 'UserAccounts'
+dynamodb = boto3.resource(
+    'dynamodb',
+    aws_access_key_id=AWS_ACCESS_KEY_ID,
+    aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+    region_name=AWS_REGION,
+    endpoint_url=LOCALSTACK_ENDPOINT_URL
+)
+
+user_table = None 
+
 def create_bucket_if_not_exists():
-    """Tenta criar o bucket se ele ainda não existir no LocalStack."""
     try:
         s3_client.head_bucket(Bucket=S3_BUCKET_NAME)
-        print(f"Bucket '{S3_BUCKET_NAME}' já existe.")
+        print(f"[S3] Bucket '{S3_BUCKET_NAME}' já existe.")
     except ClientError as e:
-        # Se o erro for 404 Not Found, o bucket precisa ser criado
         error_code = e.response.get('Error', {}).get('Code')
-        if error_code == '404' or error_code == 'NoSuchBucket':
+        if error_code in ('404', 'NoSuchBucket'):
             try:
-                # O LocalStack é mais flexível, mas o CreateBucket pode exigir LocationConstraint
                 s3_client.create_bucket(Bucket=S3_BUCKET_NAME) 
-                print(f"Bucket '{S3_BUCKET_NAME}' criado com sucesso.")
+                print(f"[S3] Bucket '{S3_BUCKET_NAME}' criado com sucesso.")
             except ClientError as ce:
-                print(f"Erro ao criar bucket: {ce}")
+                print(f"[S3] Erro ao criar bucket: {ce}")
         else:
-            print(f"Erro ao verificar bucket: {e}")
+            print(f"[S3] Erro ao verificar bucket: {e}")
 
-# Executa a criação do bucket ao iniciar o Flask
-create_bucket_if_not_exists()
+def create_user_table_if_not_exists():
+    global user_table
+    try:
+        table = dynamodb.Table(DYNAMODB_TABLE_NAME)
+        table.load()
+        print(f"[DynamoDB] Tabela '{DYNAMODB_TABLE_NAME}' já existe.")
+        user_table = table
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'ResourceNotFoundException':
+            print(f"[DynamoDB] Criando tabela '{DYNAMODB_TABLE_NAME}'...")
+            try:
+                table = dynamodb.create_table(
+                    TableName=DYNAMODB_TABLE_NAME,
+                    KeySchema=[
+                        {'AttributeName': 'username', 'KeyType': 'HASH'}
+                    ],
+                    AttributeDefinitions=[
+                        {'AttributeName': 'username', 'AttributeType': 'S'}
+                    ],
+                    ProvisionedThroughput={'ReadCapacityUnits': 5, 'WriteCapacityUnits': 5}
+                )
+                table.wait_until_exists()
+                print(f"[DynamoDB] Tabela '{DYNAMODB_TABLE_NAME}' criada com sucesso.")
+                user_table = table
+            except Exception as ce:
+                print(f"[DynamoDB] Erro ao criar tabela: {ce}")
+        else:
+            print(f"[DynamoDB] Erro ao acessar tabela: {e}")
 
-
-@app.route('/', methods=['GET', 'POST'])
+@app.route('/')
 def index():
+    if session.get('logged_in'):
+        return redirect(url_for('dashboard'))
+    return redirect(url_for('login'))
+
+@app.route('/signup', methods=['GET', 'POST'])
+def signup():
     if request.method == 'POST':
-        # --- Lógica de UPLOAD de Arquivo ---
+        username = request.form['username']
+        password = request.form['password']
+        
+        hashed_password = generate_password_hash(password)
+        
+        try:
+            response = user_table.get_item(Key={'username': username})
+            if 'Item' in response:
+                return render_template('signup.html', error="Nome de usuário já existe.")
+            
+            user_table.put_item(
+                Item={
+                    'username': username,
+                    'password_hash': hashed_password,
+                    'email': request.form['email']
+                }
+            )
+            return redirect(url_for('login', message="Conta criada com sucesso! Faça login."))
+
+        except Exception as e:
+            return render_template('signup.html', error=f"Erro ao registrar: {e}")
+
+    return render_template('signup.html')
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+        
+        try:
+            response = user_table.get_item(Key={'username': username})
+            user_item = response.get('Item')
+            
+            if user_item and check_password_hash(user_item['password_hash'], password):
+                session['logged_in'] = True
+                session['username'] = username
+                return redirect(url_for('dashboard'))
+            else:
+                return render_template('login.html', error="Credenciais inválidas.")
+
+        except Exception as e:
+            return render_template('login.html', error=f"Erro ao fazer login: {e}")
+    
+    return render_template('login.html', message=request.args.get('message'))
+
+@app.route('/logout')
+def logout():
+    session.pop('logged_in', None)
+    session.pop('username', None)
+    return redirect(url_for('login', message="Você saiu da conta."))
+
+@app.route('/dashboard', methods=['GET', 'POST'])
+def dashboard():
+    if not session.get('logged_in'):
+        return redirect(url_for('login'))
+
+    if request.method == 'POST':
         if 'file' not in request.files:
             return redirect(request.url)
         file = request.files['file']
         
-        if file.filename == '':
-            return redirect(request.url)
-
-        if file:
-            object_key = file.filename
+        if file.filename:
+            object_key = f"{session['username']}/{file.filename}"
             
             try:
-                # upload_fileobj é a maneira eficiente de fazer upload com Boto3
                 s3_client.upload_fileobj(
                     file,
                     S3_BUCKET_NAME,
                     object_key
                 )
-                print(f"Arquivo '{object_key}' enviado com sucesso.")
+                print(f"[S3] Arquivo '{object_key}' enviado por {session['username']}")
             except Exception as e:
-                print(f"Erro durante o upload: {e}")
+                print(f"[S3] Erro durante o upload: {e}")
             
-            return redirect(url_for('index'))
+            return redirect(url_for('dashboard'))
 
-    # --- Lógica de LISTAGEM de Arquivos ---
     files = []
     try:
-        response = s3_client.list_objects_v2(Bucket=S3_BUCKET_NAME)
-        # Extrai o nome (Key) dos objetos no bucket
-        if 'Contents' in response:
-            files = [obj['Key'] for obj in response['Contents']]
-    except ClientError as e:
-        print(f"Erro ao listar objetos: {e}")
-
-    return render_template('index.html', files=files, bucket_name=S3_BUCKET_NAME)
-
-
-@app.route('/download/<filename>')
-def download(filename):
-    # --- Lógica de DOWNLOAD de Arquivo ---
-    try:
-        # Pega o objeto do S3
-        file_object = s3_client.get_object(Bucket=S3_BUCKET_NAME, Key=filename)
+        prefix = f"{session['username']}/"
+        response = s3_client.list_objects_v2(Bucket=S3_BUCKET_NAME, Prefix=prefix)
         
-        # Cria uma resposta de streaming para o download
+        if 'Contents' in response:
+            files = [
+                {
+                    'key': obj['Key'],
+                    'filename': obj['Key'].replace(prefix, '', 1) 
+                } 
+                for obj in response['Contents']
+            ]
+    except ClientError as e:
+        print(f"[S3] Erro ao listar objetos: {e}")
+
+    return render_template(
+        'dashboard.html', 
+        username=session['username'], 
+        bucket_name=S3_BUCKET_NAME, 
+        files=files
+    )
+
+@app.route('/download/<path:filename>')
+def download(filename):
+    if not session.get('logged_in'):
+        return redirect(url_for('login'))
+        
+    full_object_key = f"{session['username']}/{filename}"
+    
+    try:
+        file_object = s3_client.get_object(Bucket=S3_BUCKET_NAME, Key=full_object_key)
+        
         return Response(
             file_object['Body'].read(),
             mimetype=file_object['ContentType'],
             headers={"Content-Disposition": f"attachment;filename={filename}"}
         )
     except ClientError as e:
-        # Retorna erro 404 se o arquivo não for encontrado
-        return f"Erro ao baixar arquivo: Arquivo não encontrado.", 404
+        return f"Erro ao baixar arquivo: Arquivo não encontrado ou permissão negada.", 404
     except Exception as e:
         return f"Erro inesperado: {str(e)}", 500
 
-
 if __name__ == '__main__':
-    # Roda o Flask, permitindo acesso de fora do container (necessário no WSL/Docker)
-    app.run(debug=True, host='0.0.0.0')
+    create_bucket_if_not_exists()
+    create_user_table_if_not_exists()
+    
+    app.run(debug=True, host='0.0.0.0', port=5000)
